@@ -7,7 +7,8 @@
     </div>
 
     <div class="message-section">
-      <div class="controls-container">
+      <div class="message-map">
+        <MessageMap :messages="messages" />
       </div>
     </div>
 
@@ -27,11 +28,10 @@
           
           <!-- 播放按钮 - 修改为更小尺寸 -->
           <el-button 
-            @click="playAudio"
+            @click="sendRequestToBackend"
             class="control-button play-button"
             size="small"
             type="primary"
-            :disabled="!hasRecording"
             circle>
             <el-icon><video-play /></el-icon>
           </el-button>
@@ -62,6 +62,7 @@ import { useLive2DStore } from '../composables/useLive2D';
 import { storeToRefs } from 'pinia';
 import { ElButton, ElDialog, ElText, ElIcon } from 'element-plus';
 import { VideoPlay } from '@element-plus/icons-vue';
+import MessageMap from 'src/components/MessageMap.vue';
 import 'element-plus/dist/index.css';
 
 // 使用Pinia Store
@@ -76,6 +77,313 @@ const waveCanvas = ref(null);
 const isRecording = ref(false);
 const showRecordingModal = ref(false);
 const hasRecording = ref(false);
+
+const messages = ref([
+  { type: 'ai', content: '你好，我是AI助手，有什么我可以帮你的？', timestamp: Date.now() }
+]);
+
+// 示例：添加新消息的方法（在实际应用中，这将由您的发送消息逻辑调用）
+const addMessage = (type, content) => {
+  messages.value.push({
+    type,
+    content,
+    timestamp: Date.now()
+  });
+};
+
+const isLoading = ref(false);
+
+const sendRequestToBackend = async () => {
+  try {
+    isLoading.value = true;
+    
+    // 创建一个用户消息
+    messages.value.push({
+      type: 'user',
+      content: '请分析这段音频在说什么',
+      timestamp: Date.now()
+    });
+    
+    // 创建请求体
+    const requestBody = {
+      "conversation_id": "conv_test",
+      "content": [
+        {
+          "type": "input_audio",
+          "input_audio": {
+            "data": "https://dashscope.oss-cn-beijing.aliyuncs.com/audios/welcome.mp3",
+            "format": "mp3"
+          }
+        },
+        {
+          "type": "text", 
+          "text": "这段音频在说什么"
+        }
+      ]
+    };
+    
+    // 发送POST请求到后端API
+    const response = await fetch('http://localhost:8000/message', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(requestBody)
+    });
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
+    // 处理流式响应
+    await handleStreamingResponse(response);
+    
+  } catch (error) {
+    console.error('发送请求失败:', error);
+    // 显示错误消息
+    messages.value.push({
+      type: 'ai',
+      content: '抱歉，处理您的请求时出现了问题，请重试。',
+      timestamp: Date.now()
+    });
+  } finally {
+    isLoading.value = false;
+  }
+};
+
+// 添加音频处理相关的状态变量
+let currentAudioContext = null;
+
+// 处理流式响应的方法，同时处理text和audio
+const handleStreamingResponse = async (response) => {
+  // 创建一个新的AI消息
+  const newMessage = {
+    type: 'ai',
+    content: '',
+    timestamp: Date.now()
+  };
+  
+  // 添加到消息列表
+  messages.value.push(newMessage);
+  
+  try {
+    // 获取响应的ReadableStream
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let buffer = '';
+    
+    // 处理流式响应
+    while (true) {
+      const { value, done } = await reader.read();
+      
+      // 如果流结束，跳出循环
+      if (done) break;
+      
+      // 解码二进制数据为文本
+      const chunk = decoder.decode(value, { stream: true });
+      buffer += chunk;
+      
+      // 寻找完整的 SSE 消息 (data: {...})
+      while (true) {
+        const dataStart = buffer.indexOf('data: {');
+        if (dataStart === -1) break;
+        
+        // 从找到的'data: {'开始查找下一个换行符
+        const newlineAfterData = buffer.indexOf('\n', dataStart);
+        
+        // 如果没找到换行符，说明消息不完整，等待更多数据
+        if (newlineAfterData === -1) break;
+        
+        // 提取可能的JSON部分
+        const jsonStart = dataStart + 6; // 'data: ' 的长度为 6
+        const potentialJson = buffer.substring(jsonStart, newlineAfterData).trim();
+        
+        try {
+          // 检查是否包含完整的JSON对象
+          const lastBrace = potentialJson.lastIndexOf('}');
+          if (lastBrace === -1) {
+            // 如果没有找到结束括号，等待更多数据
+            break;
+          }
+          
+          // 提取可能完整的JSON
+          const completeJson = potentialJson.substring(0, lastBrace + 1);
+          const jsonData = JSON.parse(completeJson);
+          
+          // 处理text字段的数据
+          if (jsonData.text !== undefined && jsonData.text !== null) {
+            // 使用text字段的内容
+            newMessage.content += jsonData.text;
+            // 强制Vue更新视图
+            messages.value = [...messages.value];
+          }
+          
+          // 处理audio字段的数据
+          if (jsonData.audio !== undefined && jsonData.audio !== null) {
+            // 直接播放base64音频
+            playBase64AudioDirectly(jsonData.audio);
+          }
+          
+          // 从缓冲区中移除已处理的部分
+          buffer = buffer.substring(newlineAfterData + 1);
+        } catch (e) {
+          console.error('JSON解析失败:', e);
+          // 移除可能损坏的数据，继续处理下一条
+          buffer = buffer.substring(newlineAfterData + 1);
+        }
+      }
+    }
+    
+    // 处理最后可能的不完整JSON
+    const lastDataIndex = buffer.lastIndexOf('data: {');
+    if (lastDataIndex !== -1) {
+      try {
+        const jsonStr = buffer.substring(lastDataIndex + 6).trim();
+        if (jsonStr && jsonStr.includes('}')) {
+          const lastBrace = jsonStr.lastIndexOf('}');
+          const jsonData = JSON.parse(jsonStr.substring(0, lastBrace + 1));
+          
+          if (jsonData.text) {
+            newMessage.content += jsonData.text;
+            messages.value = [...messages.value];
+          }
+          
+          if (jsonData.audio) {
+            playBase64AudioDirectly(jsonData.audio);
+          }
+        }
+      } catch (e) {
+        console.error('处理剩余数据失败:', e);
+      }
+    }
+  } catch (error) {
+    console.error('读取流式响应失败:', error);
+    // 添加错误提示到消息
+    newMessage.content += '\n[接收消息时出错]';
+    messages.value = [...messages.value];
+  }
+};
+
+const playBase64AudioDirectly = (base64Data) => {
+  // 检查base64数据是否有效
+  if (!base64Data || typeof base64Data !== 'string') {
+    console.error('无效的base64数据');
+    return;
+  }
+  
+  try {
+    // 确保audioContext存在
+    if (!currentAudioContext) {
+      try {
+        currentAudioContext = new (window.AudioContext || window.webkitAudioContext)();
+      } catch (e) {
+        console.error('创建AudioContext失败:', e);
+        return;
+      }
+    }
+    
+    // 直接从base64创建ArrayBuffer (不需要使用atob)
+    let binary = '';
+    const bytes = new Uint8Array(base64Data.length);
+    let arrayBuffer;
+    
+    try {
+      // 方法1: 使用Base64 API (较新的浏览器支持)
+      if (window.atob) {
+        try {
+          // 修复base64填充字符
+          while (base64Data.length % 4 !== 0) {
+            base64Data += '=';
+          }
+          
+          // 解码base64
+          binary = atob(base64Data);
+          arrayBuffer = new ArrayBuffer(binary.length);
+          const bytes = new Uint8Array(arrayBuffer);
+          
+          // 填充arrayBuffer
+          for (let i = 0; i < binary.length; i++) {
+            bytes[i] = binary.charCodeAt(i);
+          }
+        } catch (e) {
+          console.error('Base64解码失败:', e);
+        }
+      }
+    } catch (e) {
+      console.error('Base64解码尝试失败:', e);
+      return;
+    }
+    
+    // 打印音频信息，方便调试
+    console.log('音频数据大小:', arrayBuffer.byteLength, '字节');
+    
+    // 检查WAV头信息
+    if (arrayBuffer.byteLength > 44) { // WAV头至少44字节
+      const headerView = new DataView(arrayBuffer, 0, 44);
+      // 检查RIFF和WAVE标识
+      const riff = String.fromCharCode(
+        headerView.getUint8(0), headerView.getUint8(1),
+        headerView.getUint8(2), headerView.getUint8(3)
+      );
+      const wave = String.fromCharCode(
+        headerView.getUint8(8), headerView.getUint8(9),
+        headerView.getUint8(10), headerView.getUint8(11)
+      );
+      
+      console.log('文件标识:', riff, wave);
+      console.log('采样率:', headerView.getUint32(24, true));
+      console.log('声道数:', headerView.getUint16(22, true));
+      console.log('位深度:', headerView.getUint16(34, true));
+    } else {
+      console.warn('音频数据太短，不像是有效的WAV文件');
+    }
+    
+    // 解码音频数据
+    currentAudioContext.decodeAudioData(
+      arrayBuffer, 
+      (buffer) => {
+        console.log('音频解码成功:', buffer.duration, '秒');
+        // 创建音频源
+        const source = currentAudioContext.createBufferSource();
+        source.buffer = buffer;
+        
+        // 连接到音频输出
+        source.connect(currentAudioContext.destination);
+        
+        // 开始播放
+        source.start(0);
+        
+        // 可选：如果有Live2D模型，可以触发说话动画
+        if (model.value) {
+          // 尝试触发Live2D模型说话动画
+          try {
+            if (typeof model.value.motion === 'function') {
+              // 随机选择一个动作组
+              const motionGroups = ['idle', 'tap_body', 'pinch_in', 'flick_head'];
+              const groupName = motionGroups[Math.floor(Math.random() * motionGroups.length)];
+              model.value.motion(groupName);
+            }
+          } catch (err) {
+            console.error('触发Live2D动作失败:', err);
+          }
+        }
+      }, 
+      (err) => {
+        console.error('解码音频失败:', err);
+        
+        // 尝试直接创建和播放音频元素(备用方案)
+        try {
+          const audio = new Audio(`data:audio/wav;base64,${base64Data}`);
+          audio.play().catch(e => console.error('直接播放音频失败:', e));
+        } catch (e) {
+          console.error('备用方案播放音频失败:', e);
+        }
+      }
+    );
+  } catch (error) {
+    console.error('播放音频处理失败:', error);
+  }
+};
 
 // 音频相关变量
 let audioContext = null;
@@ -336,7 +644,7 @@ const playAudio = () => {
   }
 };
 
-// 清理资源
+// 修改现有的cleanupAudio函数，添加对AudioContext的清理
 const cleanupAudio = () => {
   stopRecording();
   
@@ -346,8 +654,13 @@ const cleanupAudio = () => {
   }
   
   if (audioContext) {
-    audioContext.close();
+    audioContext.close().catch(console.error);
     audioContext = null;
+  }
+  
+  if (currentAudioContext) {
+    currentAudioContext.close().catch(console.error);
+    currentAudioContext = null;
   }
   
   if (audioUrl) {
