@@ -28,7 +28,7 @@
           
           <!-- 播放按钮 - 修改为更小尺寸 -->
           <el-button 
-            @click="sendRequestToBackend"
+            @click="playAudio"
             class="control-button play-button"
             size="small"
             type="primary"
@@ -59,6 +59,7 @@
 <script setup>
 import { ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue';
 import { useLive2DStore } from '../composables/useLive2D';
+import { useOssStore } from '../composables/useOss';
 import { storeToRefs } from 'pinia';
 import { ElButton, ElDialog, ElText, ElIcon } from 'element-plus';
 import { VideoPlay } from '@element-plus/icons-vue';
@@ -77,10 +78,32 @@ const waveCanvas = ref(null);
 const isRecording = ref(false);
 const showRecordingModal = ref(false);
 const hasRecording = ref(false);
+// 存储最后一次上传录音的OSS URL
+let speechRecognition = null; // 语音识别实例
 
+const generateConversationId = () => {
+  const randomPart = Math.random().toString(36).substring(2, 10);
+  const timestampPart = Date.now().toString(36);
+  return `conv_${randomPart}${timestampPart}`;
+};
+
+const conversation_id = generateConversationId();
+// 在现有变量声明区域添加
+const recognizedText = ref(''); // 存储语音识别结果
 const messages = ref([
   { type: 'ai', content: '你好，我是AI助手，有什么我可以帮你的？', timestamp: Date.now() }
 ]);
+
+// 使用OSS Store
+const ossStore = useOssStore();
+
+// 初始化OSS
+ossStore.initialize({
+  region: '',
+  accessKeyId: '',
+  accessKeySecret: '',
+  bucket: ''
+});
 
 // 示例：添加新消息的方法（在实际应用中，这将由您的发送消息逻辑调用）
 const addMessage = (type, content) => {
@@ -93,31 +116,31 @@ const addMessage = (type, content) => {
 
 const isLoading = ref(false);
 
-const sendRequestToBackend = async () => {
+const sendRequestToBackend = async (userText, recordUrl) => {
   try {
     isLoading.value = true;
     
     // 创建一个用户消息
     messages.value.push({
       type: 'user',
-      content: '请分析这段音频在说什么',
+      content: userText,
       timestamp: Date.now()
     });
     
     // 创建请求体
     const requestBody = {
-      "conversation_id": "conv_test",
+      "conversation_id": conversation_id,
       "content": [
         {
           "type": "input_audio",
           "input_audio": {
-            "data": "https://dashscope.oss-cn-beijing.aliyuncs.com/audios/welcome.mp3",
-            "format": "mp3"
+            "data": recordUrl,
+            "format": "wav",
           }
         },
         {
           "type": "text", 
-          "text": "这段音频在说什么"
+          "text": userText
         }
       ]
     };
@@ -264,130 +287,143 @@ const handleStreamingResponse = async (response) => {
   }
 };
 
+// 添加音频队列管理
+const audioQueue = [];
+let isPlaying = false;
+let currentAudioSource = null;
+
 const playBase64AudioDirectly = (base64Data) => {
-  // 检查base64数据是否有效
+  console.log('接收到PCM音频数据，加入队列');
+  
   if (!base64Data || typeof base64Data !== 'string') {
     console.error('无效的base64数据');
     return;
   }
   
-  try {
-    // 确保audioContext存在
-    if (!currentAudioContext) {
+  // 将新的音频数据添加到队列
+  audioQueue.push(base64Data);
+  
+  // 如果当前没有播放中的音频，开始播放
+  if (!isPlaying) {
+    processAudioQueue();
+  }
+};
+
+// 处理音频队列的函数
+const processAudioQueue = () => {
+  // 如果队列为空，标记播放结束
+  if (audioQueue.length === 0) {
+    isPlaying = false;
+    
+    // 如果有Live2D模型，可以在此处将模型切换回默认状态
+    if (model.value && typeof model.value.motion === 'function') {
       try {
-        currentAudioContext = new (window.AudioContext || window.webkitAudioContext)();
-      } catch (e) {
-        console.error('创建AudioContext失败:', e);
-        return;
+        model.value.motion('idle');
+      } catch (err) {
+        console.error('触发Live2D动作失败:', err);
       }
     }
     
-    // 直接从base64创建ArrayBuffer (不需要使用atob)
-    let binary = '';
-    const bytes = new Uint8Array(base64Data.length);
-    let arrayBuffer;
-    
-    try {
-      // 方法1: 使用Base64 API (较新的浏览器支持)
-      if (window.atob) {
-        try {
-          // 修复base64填充字符
-          while (base64Data.length % 4 !== 0) {
-            base64Data += '=';
-          }
-          
-          // 解码base64
-          binary = atob(base64Data);
-          arrayBuffer = new ArrayBuffer(binary.length);
-          const bytes = new Uint8Array(arrayBuffer);
-          
-          // 填充arrayBuffer
-          for (let i = 0; i < binary.length; i++) {
-            bytes[i] = binary.charCodeAt(i);
-          }
-        } catch (e) {
-          console.error('Base64解码失败:', e);
-        }
-      }
-    } catch (e) {
-      console.error('Base64解码尝试失败:', e);
-      return;
+    return;
+  }
+  
+  // 标记正在播放
+  isPlaying = true;
+  
+  // 取出队列中的第一个音频
+  const base64Data = audioQueue.shift();
+  
+  try {
+    // 1. 解码base64为二进制数据
+    const binaryString = atob(base64Data);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
     }
     
-    // 打印音频信息，方便调试
-    console.log('音频数据大小:', arrayBuffer.byteLength, '字节');
+    // 2. 转换为Int16Array (16位PCM数据)
+    const pcmData = new Int16Array(bytes.buffer);
     
-    // 检查WAV头信息
-    if (arrayBuffer.byteLength > 44) { // WAV头至少44字节
-      const headerView = new DataView(arrayBuffer, 0, 44);
-      // 检查RIFF和WAVE标识
-      const riff = String.fromCharCode(
-        headerView.getUint8(0), headerView.getUint8(1),
-        headerView.getUint8(2), headerView.getUint8(3)
-      );
-      const wave = String.fromCharCode(
-        headerView.getUint8(8), headerView.getUint8(9),
-        headerView.getUint8(10), headerView.getUint8(11)
-      );
-      
-      console.log('文件标识:', riff, wave);
-      console.log('采样率:', headerView.getUint32(24, true));
-      console.log('声道数:', headerView.getUint16(22, true));
-      console.log('位深度:', headerView.getUint16(34, true));
-    } else {
-      console.warn('音频数据太短，不像是有效的WAV文件');
+    // 3. 创建AudioContext
+    if (!currentAudioContext || currentAudioContext.state === 'closed') {
+      currentAudioContext = new (window.AudioContext || window.webkitAudioContext)({
+        sampleRate: 24000, // 与Python代码中相同的采样率
+        latencyHint: 'interactive'
+      });
+    } else if (currentAudioContext.state === 'suspended') {
+      // 如果音频上下文被挂起，恢复它
+      currentAudioContext.resume();
     }
     
-    // 解码音频数据
-    currentAudioContext.decodeAudioData(
-      arrayBuffer, 
-      (buffer) => {
-        console.log('音频解码成功:', buffer.duration, '秒');
-        // 创建音频源
-        const source = currentAudioContext.createBufferSource();
-        source.buffer = buffer;
-        
-        // 连接到音频输出
-        source.connect(currentAudioContext.destination);
-        
-        // 开始播放
-        source.start(0);
-        
-        // 可选：如果有Live2D模型，可以触发说话动画
-        if (model.value) {
-          // 尝试触发Live2D模型说话动画
-          try {
-            if (typeof model.value.motion === 'function') {
-              // 随机选择一个动作组
-              const motionGroups = ['idle', 'tap_body', 'pinch_in', 'flick_head'];
-              const groupName = motionGroups[Math.floor(Math.random() * motionGroups.length)];
-              model.value.motion(groupName);
-            }
-          } catch (err) {
-            console.error('触发Live2D动作失败:', err);
-          }
-        }
-      }, 
-      (err) => {
-        console.error('解码音频失败:', err);
-        
-        // 尝试直接创建和播放音频元素(备用方案)
-        try {
-          const audio = new Audio(`data:audio/wav;base64,${base64Data}`);
-          audio.play().catch(e => console.error('直接播放音频失败:', e));
-        } catch (e) {
-          console.error('备用方案播放音频失败:', e);
-        }
-      }
+    // 4. 创建适当大小和采样率的AudioBuffer
+    const numChannels = 1; // 单声道
+    const audioBuffer = currentAudioContext.createBuffer(
+      numChannels,
+      pcmData.length,
+      24000 // 固定采样率为24000Hz
     );
+    
+    // 5. 将Int16数据复制到AudioBuffer，并转换为-1.0到1.0之间的浮点数
+    const channelData = audioBuffer.getChannelData(0);
+    for (let i = 0; i < pcmData.length; i++) {
+      // Int16 (-32768 to 32767) 转换为 Float32 (-1.0 to 1.0)
+      channelData[i] = pcmData[i] / 32768.0;
+    }
+    
+    // 6. 创建音频源并播放
+    const source = currentAudioContext.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(currentAudioContext.destination);
+    
+    // 保存当前音频源的引用
+    currentAudioSource = source;
+    
+    console.log('音频信息:', {
+      持续时间: audioBuffer.duration + '秒',
+      采样率: audioBuffer.sampleRate + 'Hz',
+      样本数: pcmData.length,
+      队列中剩余: audioQueue.length
+    });
+    
+    // 7. 设置播放结束回调，播放下一个音频
+    source.onended = () => {
+      console.log('当前音频片段播放完成');
+      currentAudioSource = null;
+      
+      // 处理队列中的下一个音频
+      setTimeout(() => {
+        processAudioQueue();
+      }, 1); // 添加小延迟，确保音频之间有短暂停顿
+    };
+    
+    // 8. 播放音频
+    source.start(0);
+    
+    // 9. 如果有Live2D模型，触发说话动作
+    if (model.value && typeof model.value.motion === 'function') {
+      try {
+        // 仅在第一个音频片段时触发动作，避免重复触发
+        if (audioQueue.length === 0 || currentAudioSource === source) {
+          model.value.motion('speak');
+        }
+      } catch (err) {
+        console.error('触发Live2D动作失败:', err);
+      }
+    }
+    
   } catch (error) {
-    console.error('播放音频处理失败:', error);
+    console.error('PCM音频处理失败:', error);
+    
+    // 出错时继续处理下一个音频
+    setTimeout(() => {
+      processAudioQueue();
+    }, 10);
   }
 };
 
 // 音频相关变量
 let audioContext = null;
-let analyser = null;
+let analyser = null
 let microphone = null;
 let dataArray = null;
 let frequencyData = null;
@@ -550,9 +586,10 @@ const drawRoundedBar = (ctx, x, y, width, height, radius) => {
   ctx.fill();
 };
 
-// 开始录音
+// 开始录音同时进行语音识别
 const startRecording = async () => {
   isRecording.value = true;
+  recognizedText.value = ''; // 清空之前的识别结果
   
   try {
     // 延迟一帧等待DOM更新，确保waveCanvas已经渲染
@@ -610,7 +647,11 @@ const startRecording = async () => {
       hasRecording.value = true;
     };
     
+    // 启动录音
     mediaRecorder.start();
+    
+    // 同时启动语音识别
+    startSpeechRecognition(stream);
     
     // 开始绘制波浪动画
     drawWave();
@@ -622,18 +663,234 @@ const startRecording = async () => {
   }
 };
 
-// 停止录音
-const stopRecording = () => {
+// 使用同一个音频流启动语音识别
+const startSpeechRecognition = (stream) => {
+  // 检查浏览器是否支持语音识别
+  if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+    console.error('浏览器不支持语音识别');
+    return;
+  }
+  
+  // 创建语音识别实例
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  speechRecognition = new SpeechRecognition();
+  
+  // 配置语音识别
+  speechRecognition.lang = 'en'; // 设置语言为中文
+  speechRecognition.interimResults = true; // 允许临时结果
+  speechRecognition.continuous = true; // 连续识别
+  speechRecognition.maxAlternatives = 1;
+  
+  // 结果处理
+  speechRecognition.onresult = (event) => {
+    let interimTranscript = '';
+    let finalTranscript = '';
+    
+    for (let i = event.resultIndex; i < event.results.length; ++i) {
+      const transcript = event.results[i][0].transcript;
+      if (event.results[i].isFinal) {
+        finalTranscript += transcript;
+      } else {
+        interimTranscript += transcript;
+      }
+    }
+    
+    // 更新识别文本
+    if (finalTranscript) {
+      recognizedText.value += finalTranscript + ' ';
+      console.log('最终识别结果:', finalTranscript);
+    }
+    
+    // 显示临时结果可以提高用户体验
+    if (interimTranscript && !finalTranscript) {
+      console.log('临时识别结果:', interimTranscript);
+      // 可以选择显示临时结果
+    }
+  };
+  
+  // 错误处理
+  speechRecognition.onerror = (event) => {
+    console.error('语音识别错误:', event.error);
+  };
+  
+  // 结束处理
+  speechRecognition.onend = () => {
+    // 如果录音还在继续，但识别结束了，可以重新启动识别
+    if (isRecording.value) {
+      speechRecognition.start();
+    }
+  };
+  
+  // 开始识别
+  try {
+    speechRecognition.start();
+    console.log('开始语音识别...');
+  } catch (error) {
+    console.error('启动语音识别失败:', error);
+  }
+};
+
+// 停止录音和语音识别
+const stopRecording = async () => {
+  // 更新状态
   isRecording.value = false;
   showRecordingModal.value = false;
   
+  // 创建一个Promise来等待语音识别完成
+  const waitForSpeechRecognition = new Promise((resolve) => {
+    // 如果当前没有语音识别实例，直接返回当前结果
+    if (!speechRecognition) {
+      resolve(recognizedText.value);
+      return;
+    }
+    
+    // 保存当前结果，以防止丢失
+    const currentText = recognizedText.value;
+    
+    // 创建一个onend回调来获取最终结果
+    const originalOnEnd = speechRecognition.onend;
+    
+    speechRecognition.onend = () => {
+      // 调用原始的onend处理器
+      if (originalOnEnd) {
+        originalOnEnd.call(speechRecognition);
+      }
+      
+      // 给语音识别系统一点时间处理最后的结果
+      setTimeout(() => {
+        // 解析Promise，返回识别文本
+        resolve(recognizedText.value || currentText);
+      }, 500);
+    };
+    
+    // 停止语音识别
+    try {
+      speechRecognition.stop();
+      console.log('语音识别已停止，等待最终结果...');
+    } catch (error) {
+      console.error('停止语音识别时出错:', error);
+      resolve(currentText); // 出错时使用当前文本
+    }
+  });
+  
+  // 停止波形动画
   if (animationFrameId) {
     cancelAnimationFrame(animationFrameId);
     animationFrameId = null;
   }
   
+  // 如果录音正在进行，停止它
   if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    // 停止录音前先修改onstop事件处理器，让它自动上传
+    mediaRecorder.onstop = async () => {
+      // 创建音频Blob
+      audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+      
+      // 释放之前的URL
+      if (audioUrl) {
+        URL.revokeObjectURL(audioUrl);
+      }
+      
+      // 创建本地URL用于预览
+      audioUrl = URL.createObjectURL(audioBlob);
+      
+      // 创建音频元素
+      if (!audioElement) {
+        audioElement = new Audio();
+      }
+      audioElement.src = audioUrl;
+      
+      // 设置录音状态
+      hasRecording.value = true;
+      
+      try {
+        // 等待语音识别完成，获取最终文本
+        const finalRecognizedText = await waitForSpeechRecognition;
+        console.log('最终语音识别结果:', finalRecognizedText);
+        
+        // 生成文件路径和名称
+        const filename = `recordings/${conversation_id}/${Date.now()}.wav`;
+        
+        // 上传到OSS
+        const result = await ossStore.uploadFile(filename, audioBlob, {
+          contentType: 'audio/wav',
+          fileName: `recording_${Date.now()}.wav`,
+          tags: { 
+            type: 'user_recording', 
+            conversation_id: conversation_id,
+            // 避免使用中文标签值，防止OSS报错
+            has_transcript: finalRecognizedText ? 'yes' : 'no',
+            transcript_length: finalRecognizedText ? String(finalRecognizedText.length) : '0'
+          }
+        });
+        
+        if (result.success) {
+          // 获取带签名的URL
+          const ossUrl = ossStore.getSignedUrl(filename, 3600); // 1小时有效期
+          console.log('录音上传成功，URL:', ossUrl);
+          
+          // 使用识别出的文本发送请求
+          sendRequestToBackend(finalRecognizedText || "请分析这段音频", ossUrl);
+        } else {
+          console.error('录音上传失败:', result.error);
+        }
+      } catch (error) {
+        console.error('上传录音时发生错误:', error);
+      }
+    };
+    
+    // 停止录音
     mediaRecorder.stop();
+    
+    // 停止所有音轨
+    if (mediaRecorder.stream) {
+      mediaRecorder.stream.getTracks().forEach(track => track.stop());
+    }
+  } else {
+    // 如果没有正在进行的录音，仍然需要停止语音识别
+    speechRecognition = null;
+  }
+  
+  // 断开麦克风连接
+  if (microphone) {
+    microphone.disconnect();
+  }
+};
+
+// 上传录音到OSS并获取URL
+const uploadRecordingToOss = async () => {
+  // 确保有录音数据
+  if (!audioBlob) {
+    console.error('没有可用的录音数据');
+    return null;
+  }
+  
+  try {
+    // 生成文件路径和名称
+    const filename = `recordings/${conversationId.value}/${Date.now()}.wav`;
+    
+    // 上传到OSS
+    console.log('开始上传录音到OSS...');
+    const result = await ossStore.uploadFile(filename, audioBlob, {
+      contentType: 'audio/wav',
+      fileName: `recording_${Date.now()}.wav`,
+      tags: { 
+        type: 'user_recording', 
+        conversation_id: conversationId.value 
+      }
+    });
+    
+    if (result.success) {
+      const audioUrl = ossStore.getSignedUrl(filename, 3600); // 1小时有效期
+      console.log('录音上传成功, URL:', audioUrl);
+      return audioUrl;
+    } else {
+      console.error('录音上传失败:', result.error);
+      return null;
+    }
+  } catch (error) {
+    console.error('上传录音时发生错误:', error);
+    return null;
   }
 };
 
@@ -647,6 +904,14 @@ const playAudio = () => {
 // 修改现有的cleanupAudio函数，添加对AudioContext的清理
 const cleanupAudio = () => {
   stopRecording();
+
+    // 清理语音识别
+  if (speechRecognition) {
+    try {
+      speechRecognition.stop();
+    } catch (e) {}
+    speechRecognition = null;
+  }
   
   if (microphone) {
     microphone.disconnect();
@@ -680,6 +945,7 @@ const cleanupAudio = () => {
   audioChunks = [];
   audioBlob = null;
   hasRecording.value = false;
+  recognizedText.value = '';
 };
 
 // 窗口大小改变时重新初始化波形图
