@@ -7,7 +7,7 @@
       >
         <div class="message-content">
           <div class="message-text">
-            <Bubble class="bubble-container" typing :content="message.content" :loading="loading" :typing="{ step: 1, interval: 100, suffix: '💩' }">
+            <Bubble class="bubble-container" typing :content="message.content" :loading="loading">
               
               <template #footer>
                 <div class="footer-container">
@@ -28,10 +28,10 @@
   </template>
   
   <script setup>
-  import { ref, watch, nextTick, onMounted, defineProps, defineExpose } from 'vue';
-  import { Typewriter, Bubble } from 'vue-element-plus-x';
+  import { ref, watch, nextTick, onMounted, defineProps } from 'vue';
+  import { Bubble } from 'vue-element-plus-x';
   import { ElButton, ElText, } from 'element-plus';
-  import { DocumentCopy, Refresh, Search, Star } from '@element-plus/icons-vue'
+  import { Refresh } from '@element-plus/icons-vue'
   import 'element-plus/dist/index.css';
   
   const props = defineProps({

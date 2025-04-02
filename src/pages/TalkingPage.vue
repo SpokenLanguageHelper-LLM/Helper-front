@@ -108,13 +108,13 @@ ossStore.initialize({
 });
 
 // 示例：添加新消息的方法（在实际应用中，这将由您的发送消息逻辑调用）
-const addMessage = (type, content) => {
-  messages.value.push({
-    type,
-    content,
-    timestamp: Date.now()
-  });
-};
+// const addMessage = (type, content) => {
+//   messages.value.push({
+//     type,
+//     content,
+//     timestamp: Date.now()
+//   });
+// };
 
 const isLoading = ref(false);
 
@@ -148,7 +148,7 @@ const sendRequestToBackend = async (userText, recordUrl) => {
     };
     
     // 发送POST请求到后端API
-    const response = await fetch('http://localhost:8000/message', {
+    const response = await fetch('http://115.190.94.13:8000/message', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -666,7 +666,7 @@ const startRecording = async () => {
 };
 
 // 使用同一个音频流启动语音识别
-const startSpeechRecognition = (stream) => {
+const startSpeechRecognition = () => {
   // 检查浏览器是否支持语音识别
   if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
     console.error('浏览器不支持语音识别');
@@ -859,42 +859,42 @@ const stopRecording = async () => {
   }
 };
 
-// 上传录音到OSS并获取URL
-const uploadRecordingToOss = async () => {
-  // 确保有录音数据
-  if (!audioBlob) {
-    console.error('没有可用的录音数据');
-    return null;
-  }
+// // 上传录音到OSS并获取URL
+// const uploadRecordingToOss = async () => {
+//   // 确保有录音数据
+//   if (!audioBlob) {
+//     console.error('没有可用的录音数据');
+//     return null;
+//   }
   
-  try {
-    // 生成文件路径和名称
-    const filename = `recordings/${conversationId.value}/${Date.now()}.wav`;
+//   try {
+//     // 生成文件路径和名称
+//     const filename = `recordings/${conversationId.value}/${Date.now()}.wav`;
     
-    // 上传到OSS
-    console.log('开始上传录音到OSS...');
-    const result = await ossStore.uploadFile(filename, audioBlob, {
-      contentType: 'audio/wav',
-      fileName: `recording_${Date.now()}.wav`,
-      tags: { 
-        type: 'user_recording', 
-        conversation_id: conversationId.value 
-      }
-    });
+//     // 上传到OSS
+//     console.log('开始上传录音到OSS...');
+//     const result = await ossStore.uploadFile(filename, audioBlob, {
+//       contentType: 'audio/wav',
+//       fileName: `recording_${Date.now()}.wav`,
+//       tags: { 
+//         type: 'user_recording', 
+//         conversation_id: conversationId.value 
+//       }
+//     });
     
-    if (result.success) {
-      const audioUrl = ossStore.getSignedUrl(filename, 3600); // 1小时有效期
-      console.log('录音上传成功, URL:', audioUrl);
-      return audioUrl;
-    } else {
-      console.error('录音上传失败:', result.error);
-      return null;
-    }
-  } catch (error) {
-    console.error('上传录音时发生错误:', error);
-    return null;
-  }
-};
+//     if (result.success) {
+//       const audioUrl = ossStore.getSignedUrl(filename, 3600); // 1小时有效期
+//       console.log('录音上传成功, URL:', audioUrl);
+//       return audioUrl;
+//     } else {
+//       console.error('录音上传失败:', result.error);
+//       return null;
+//     }
+//   } catch (error) {
+//     console.error('上传录音时发生错误:', error);
+//     return null;
+//   }
+// };
 
 // 播放录音
 const playAudio = () => {
@@ -911,7 +911,9 @@ const cleanupAudio = () => {
   if (speechRecognition) {
     try {
       speechRecognition.stop();
-    } catch (e) {}
+    } catch (e) {
+      console.error('停止语音识别时出错:', e);
+    }
     speechRecognition = null;
   }
   
