@@ -50,6 +50,13 @@
 			"Ids": [
 				"PARAM_MOUTH_OPEN_Y"
 			]
+		},
+		{
+			"Target":"Parameter",
+			"Name":"BackGroundSchool",
+			"Ids":[
+				"PARTS_01_BACKGROUND_02"
+			]
 		}
 	],
 	"HitAreas": []

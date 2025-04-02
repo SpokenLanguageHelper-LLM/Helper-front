@@ -76,6 +76,27 @@ export const useLive2DStore = defineStore('live2d', {
       
       this.isModelLoaded = false;
       this.currentCanvas = null;
-    }
+    },
+
+    // showBackground(backgroundId) {
+    //   if (!this.model) return;
+      
+    //   // 先隐藏所有背景
+    //   const backgrounds = [
+    //     "PARTS_01_BACKGROUND",
+    //     "PARTS_01_BACKGROUND_02",
+    //     "PARTS_01_BACKGROUND_03",
+    //     "PARTS_01_BACKGROUND_03_PLUS"
+    //   ];
+      
+    //   backgrounds.forEach(bg => {
+    //     this.model.internalModel.setPartOpacity(bg, 0);
+    //   });
+      
+    //   // 显示指定背景
+    //   if (backgroundId && backgrounds.includes(backgroundId)) {
+    //     this.model.internalModel.setPartOpacity(backgroundId, 1);
+    //   }
+    // }
   }
 });

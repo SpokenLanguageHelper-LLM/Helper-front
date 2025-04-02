@@ -2,6 +2,7 @@
   <div class="talking-page">
     <div class="live2d-section">
       <div class="live2d-container">
+        <div class="live2d-background"></div>
         <canvas ref="liveCanvas" class="live2d-canvas"></canvas>
       </div>
     </div>
@@ -68,6 +69,7 @@ import 'element-plus/dist/index.css';
 
 // 使用Pinia Store
 const live2dStore = useLive2DStore();
+// live2dStore.showBackground("PARTS_01_BACKGROUND_02");
 
 // 使用storeToRefs获取响应式状态
 const { model, isModelLoaded } = storeToRefs(live2dStore);
@@ -91,7 +93,7 @@ const conversation_id = generateConversationId();
 // 在现有变量声明区域添加
 const recognizedText = ref(''); // 存储语音识别结果
 const messages = ref([
-  { type: 'ai', content: '你好，我是AI助手，有什么我可以帮你的？', timestamp: Date.now() }
+  { type: 'ai', content: "Let's start today's conversation", timestamp: Date.now() }
 ]);
 
 // 使用OSS Store
@@ -830,7 +832,7 @@ const stopRecording = async () => {
           console.log('录音上传成功，URL:', ossUrl);
           
           // 使用识别出的文本发送请求
-          sendRequestToBackend(finalRecognizedText || "请分析这段音频", ossUrl);
+          sendRequestToBackend(finalRecognizedText, ossUrl);
         } else {
           console.error('录音上传失败:', result.error);
         }
@@ -987,8 +989,8 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .talking-page {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: 45fr 50fr 60px;
   height: 100vh;
   width: 100%;
   position: relative;
@@ -996,20 +998,76 @@ onBeforeUnmount(() => {
 
 /* 桌面默认布局 - 使用比例布局 */
 .live2d-section {
-  flex: 4.5;
+  grid-row: 1;
   position: relative;
   overflow: hidden;
 }
 
 .message-section {
-  flex: 5;
-  background-color: #ffffff;
-  border-top: 1px solid #e0e0e0;
-  padding: 12px;
+  grid-row: 2;
+  background-color: #fffef0; /* 米黄色基础背景，模拟纸张 */
+  background-image: 
+    /* 横线，模拟记事本的线条 */
+    linear-gradient(#91a3b0 0.1em, transparent 0.1em);
+  background-size: 
+    100% 48px; /* 横线之间的间距 */
+  background-position: 0 28px; /* 向下偏移28px，为顶部渐变区域留出空间 */
+  border-left: 1px solid #d9d9d9;
+  border-right: 1px solid #d9d9d9;
+  border-bottom: 1px solid #d9d9d9;
+  /* 移除原来的红色顶部边框 */
+  /* border-top: 28px solid #e74c3c; */
+  box-shadow: 
+    0 1px 3px rgba(0,0,0,0.12), 
+    0 1px 2px rgba(0,0,0,0.24),
+    inset 0 0 15px rgba(0,0,0,0.05); /* 内阴影增加纸张质感 */
+  padding: 15px; /* 均衡的内边距 */
+  padding-top: 35px; /* 增加顶部内边距，为渐变区域留出空间 */
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+}
+
+/* 添加渐变顶部条 */
+.message-section::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 28px; /* 与原来的边框高度相同 */
+  background-image: linear-gradient(135deg, #ff9900, #ff5500, #ff3366);
+  z-index: 1; /* 确保在纸张纹理之上 */
+}
+
+
+/* 添加微妙的纸张纹理 */
+.message-section::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-image: url('data:image/png;base64,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');
+  opacity: 0.07;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* 消息容器样式修改 */
+.message-map {
+  flex: 1;
+  overflow-y: auto; 
+  height: 100%;
+  padding: 0;
+  position: relative;
+  z-index: 2;
 }
 
 .speak-control {
-  flex: 0 0 60px;
+  grid-row: 3;
   background-color: #ffffff;
   border-top: 1px solid #e0e0e0;
 }
@@ -1021,6 +1079,7 @@ onBeforeUnmount(() => {
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  background-color: #fffef0; /* 米黄色基础背景，模拟纸张 */
 }
 
 .button-group {
@@ -1270,12 +1329,29 @@ onBeforeUnmount(() => {
 .live2d-canvas {
   width: 100%;
   height: 100%;
+  z-index: 1;
+  position: relative;
 }
 
 .live2d-container {
   width: 100%;
   height: 100%;
   position: relative;
+}
+
+.live2d-background {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  /* 背景图片路径，使用你的学校背景 */
+  background-image: url('/background/classroom.png');
+  /* 或者如果你知道确切路径 */
+  /* background-image: url('/shizuku/runtime/backgrounds/school.png'); */
+  background-size: cover;
+  background-position: center;
+  z-index: 0;
 }
 
 @media (max-width: 600px) {

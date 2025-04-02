@@ -6,16 +6,33 @@
         :class="['message-container', message.type === 'user' ? 'user-message' : 'ai-message']"
       >
         <div class="message-content">
-          <div class="message-text">{{ message.content }}</div>
-          <div class="message-time">{{ formatTime(message.timestamp) }}</div>
+          <div class="message-text">
+            <Bubble class="bubble-container" typing :content="message.content" :loading="loading" :typing="{ step: 1, interval: 100, suffix: '💩' }">
+              
+              <template #footer>
+                <div class="footer-container">
+                  <el-button type="info" :icon="Refresh" size="small" circle />
+                  <el-text> {{ formatTime(message.timestamp) }} </el-text>
+                  <!-- <el-button type="success" :icon="Search" size="small" circle />
+                  <el-button type="warning" :icon="Star" size="small" circle />
+                  <el-button color="#626aef" :icon="DocumentCopy" size="small" circle /> -->
+                </div>
+              </template>
+            </Bubble>
+          </div>
+          <!-- <div class="message-time">{{ formatTime(message.timestamp) }}</div> -->
         </div>
       </div>
-      <div ref="bottomEl" class="message-bottom"></div>
+      <!-- <div ref="bottomEl" class="message-bottom"></div> -->
     </div>
   </template>
   
   <script setup>
   import { ref, watch, nextTick, onMounted, defineProps, defineExpose } from 'vue';
+  import { Typewriter, Bubble } from 'vue-element-plus-x';
+  import { ElButton, ElText, } from 'element-plus';
+  import { DocumentCopy, Refresh, Search, Star } from '@element-plus/icons-vue'
+  import 'element-plus/dist/index.css';
   
   const props = defineProps({
     messages: {
@@ -69,29 +86,29 @@
   }
   
   .user-message {
-    justify-content: flex-start;
-  }
-  
-  .ai-message {
     justify-content: flex-end;
   }
   
+  .ai-message {
+    justify-content: flex-start;
+  }
+  
   .message-content {
-    max-width: 70%;
-    padding: 12px 16px;
+    max-width: 80%;
+    padding: 0px;
     border-radius: 12px;
     position: relative;
   }
   
   .user-message .message-content {
-    background-color: #f0f0f0;
+    /* background-color: #f0f0f0; */
     border-bottom-left-radius: 4px;
   }
   
   .ai-message .message-content {
-    background-color: #e1f5fe;
+    /* background-color: #e1f5fe; */
     border-bottom-right-radius: 4px;
-    text-align: right;
+    /* text-align: right; */
   }
   
   .message-sender {
@@ -116,4 +133,28 @@
   .message-bottom {
     height: 1px;
   }
-  </style>
+
+  .bubble-container {
+    background-color: transparent;
+    border-radius: 12px;
+    position: relative;
+    max-width: 100%;
+    overflow-wrap: break-word;
+    font-family:'Lucida Sans', 'Lucida Sans Regular', 'Lucida Grande', 'Lucida Sans Unicode', Geneva, Verdana, sans-serif;
+    font-weight: bold;
+  }
+</style>
+
+<style scoped lang="less">
+  .footer-container {
+    :deep(.el-button+.el-button) {
+      margin-left: 8px;
+    }
+    :deep(.el-text) {
+    margin-left: 8px;
+    }
+  }
+  :deep(.el-bubble-content-wrapper .el-bubble-content-filled) {
+    background: linear-gradient(to right, #fdfcfb 0%, #ffd1ab 100%) !important;
+  }
+</style>

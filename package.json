@@ -18,12 +18,15 @@
     "@quasar/extras": "^1.16.4",
     "ali-oss": "^6.22.0",
     "element-plus": "^2.9.7",
+    "less": "^4.2.2",
+    "less-loader": "^12.2.0",
     "pinia": "^3.0.1",
     "pixi-live2d-display": "^0.4.0",
     "pixi.js": "^6.5.10",
     "quasar": "^2.16.0",
     "speaker": "^0.5.5",
     "vue": "^3.4.18",
+    "vue-element-plus-x": "^1.0.81",
     "vue-router": "^4.0.0"
   },
   "devDependencies": {
